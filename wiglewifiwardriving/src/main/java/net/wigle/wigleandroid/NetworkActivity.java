@@ -39,6 +39,7 @@ import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.MapView;
 import com.google.android.gms.maps.MapsInitializer;
+import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.model.CameraPosition;
 import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
@@ -47,6 +48,7 @@ import net.wigle.wigleandroid.background.QueryThread;
 import net.wigle.wigleandroid.model.ConcurrentLinkedHashMap;
 import net.wigle.wigleandroid.model.Network;
 import net.wigle.wigleandroid.model.NetworkType;
+import net.wigle.wigleandroid.model.OUI;
 
 @SuppressWarnings("deprecation")
 public class NetworkActivity extends ActionBarActivity implements DialogListener {
@@ -73,6 +75,10 @@ public class NetworkActivity extends ActionBarActivity implements DialogListener
     public void onCreate(Bundle savedInstanceState) {
         MainActivity.info("NET: onCreate");
         super.onCreate(savedInstanceState);
+
+        if (ListFragment.lameStatic.oui == null) {
+            ListFragment.lameStatic.oui = new OUI(getAssets());
+        }
 
         final ActionBar actionBar = getSupportActionBar();
         if (actionBar != null) {
@@ -102,6 +108,10 @@ public class NetworkActivity extends ActionBarActivity implements DialogListener
             // do gui work
             tv = (TextView) findViewById( R.id.ssid );
             tv.setText( network.getSsid() );
+
+            final String ouiString = network.getOui(ListFragment.lameStatic.oui);
+            tv = (TextView) findViewById( R.id.oui );
+            tv.setText( ouiString );
 
             final int image = NetworkListAdapter.getImage( network );
             final ImageView ico = (ImageView) findViewById( R.id.wepicon );
@@ -199,39 +209,31 @@ public class NetworkActivity extends ActionBarActivity implements DialogListener
                 else if ( msg.what == MSG_OBS_DONE ) {
                     tv.setText( " " + Integer.toString( observations ) );
 
-                    GoogleMap map = null;
-                    try {
-                        if (mapView != null) {
-                            map = mapView.getMap();
-                        }
-                    }
-                    catch (final NullPointerException ex) {
-                        MainActivity.error("MSG_OBS_DONE npe getting map: " + ex, ex);
-                    }
+                    mapView.getMapAsync(new OnMapReadyCallback() {
+                        @Override
+                        public void onMapReady(final GoogleMap googleMap) {
+                            int count = 0;
+                            for (Map.Entry<LatLng, Integer> obs : obsMap.entrySet()) {
+                                final LatLng latLon = obs.getKey();
+                                final int level = obs.getValue();
 
-                    if (map != null) {
+                                if (count == 0 && network.getLatLng() == null) {
+                                    final CameraPosition cameraPosition = new CameraPosition.Builder()
+                                            .target(latLon).zoom(DEFAULT_ZOOM).build();
+                                    googleMap.moveCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
+                                }
 
-                        int count = 0;
-                        for ( Map.Entry<LatLng, Integer> obs : obsMap.entrySet() ) {
-                            final LatLng latLon = obs.getKey();
-                            final int level = obs.getValue();
-
-                            if (count == 0 && network.getLatLng() == null) {
-                                final CameraPosition cameraPosition = new CameraPosition.Builder()
-                                        .target(latLon).zoom(DEFAULT_ZOOM).build();
-                                mapView.getMap().moveCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
+                                googleMap.addCircle(new CircleOptions()
+                                        .center(latLon)
+                                        .radius(4)
+                                        .fillColor(NetworkListAdapter.getSignalColor(level, true))
+                                        .strokeWidth(0)
+                                        .zIndex(level));
+                                count++;
                             }
-
-                            map.addCircle(new CircleOptions()
-                                    .center(latLon)
-                                    .radius(4)
-                                    .fillColor(NetworkListAdapter.getSignalColor( level, true ))
-                                    .strokeWidth(0)
-                                    .zIndex(level));
-                            count++;
+                            MainActivity.info("observation count: " + count);
                         }
-                        MainActivity.info("observation count: " + count);
-                    }
+                    });
                 }
             }
         };
@@ -269,18 +271,23 @@ public class NetworkActivity extends ActionBarActivity implements DialogListener
         }
         MapsInitializer.initialize( this );
 
-        if (network.getLatLng() != null && mapView.getMap() != null) {
-            final CameraPosition cameraPosition = new CameraPosition.Builder()
-                    .target(network.getLatLng()).zoom(DEFAULT_ZOOM).build();
-            mapView.getMap().moveCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
+        if (network.getLatLng() != null) {
+            mapView.getMapAsync(new OnMapReadyCallback() {
+                @Override
+                public void onMapReady(final GoogleMap googleMap) {
+                    final CameraPosition cameraPosition = new CameraPosition.Builder()
+                            .target(network.getLatLng()).zoom(DEFAULT_ZOOM).build();
+                    googleMap.moveCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
 
-            mapView.getMap().addCircle(new CircleOptions()
-                    .center(network.getLatLng())
-                    .radius(5)
-                    .fillColor(Color.argb( 128, 240, 240, 240 ))
-                    .strokeColor(Color.argb( 200, 255, 32, 32 ))
-                    .strokeWidth(3f)
-                    .zIndex(100));
+                    googleMap.addCircle(new CircleOptions()
+                            .center(network.getLatLng())
+                            .radius(5)
+                            .fillColor(Color.argb(128, 240, 240, 240))
+                            .strokeColor(Color.argb(200, 255, 32, 32))
+                            .strokeWidth(3f)
+                            .zIndex(100));
+                }
+            });
         }
 
         final RelativeLayout rlView = (RelativeLayout) findViewById( R.id.netmap_rl );
@@ -302,7 +309,12 @@ public class NetworkActivity extends ActionBarActivity implements DialogListener
                 }
                 else {
                     final CryptoDialog cryptoDialog = CryptoDialog.newInstance(network);
-                    cryptoDialog.show(NetworkActivity.this.getSupportFragmentManager(), "crypto-dialog");
+                    try {
+                        cryptoDialog.show(NetworkActivity.this.getSupportFragmentManager(), "crypto-dialog");
+                    }
+                    catch (final IllegalStateException ex) {
+                        MainActivity.error("exception showing crypto dialog: " + ex, ex);
+                    }
                 }
             }
         });
