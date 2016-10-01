@@ -1076,7 +1076,7 @@ public final class DatabaseHelper extends Thread {
         checkDB();
         MainActivity.info( "locationIterator fromId: " + fromId );
         final String[] args = new String[]{ Long.toString( fromId ) };
-        return db.rawQuery( "SELECT _id,bssid,level,lat,lon,altitude,accuracy,time FROM location WHERE _id > ?", args );
+        return db.rawQuery( "SELECT _id,bssid,level,lat,lon,altitude,accuracy,time FROM location WHERE _id > ? order by bssid", args );
     }
 
     public Cursor networkIterator() throws DBException {
