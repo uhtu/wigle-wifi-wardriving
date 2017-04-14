@@ -1,6 +1,7 @@
 package net.wigle.wigleandroid;
 
 import android.annotation.SuppressLint;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.media.AudioManager;
@@ -33,7 +34,10 @@ import org.json.JSONObject;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class UploadsFragment extends Fragment {
@@ -41,36 +45,46 @@ public class UploadsFragment extends Fragment {
     private static final int MENU_USER_STATS = 200;
     private static final int MENU_SITE_STATS = 201;
 
-    // { "success": true, "processingQueueDepth":0, "pageStart":0,"pageEnd":100,
-    // "myUserName":"asdf",
-    // "results":[{
-    // "transid":"20130313-00330",
-    // "status":"Completed Successfully",
-    // "percentdone":100,
-    // "timeparsing":7,
-    // "firsttime":"2016-07-16 11:29:27",
-    // "filename":"WigleWifi_20120213132323.csv",
-    // "filesize":154003,
-    // "filelines":1341,
-    // "discgps":821,
-    // "discovered":823,
-    // "totalgps":559,
-    // "total":595,
-    // "totallocs":893,
-    // "gendiscgps":2,
-    // "gendisc":2,
-    // "gentotalgps":43,
-    // "gentotal":43,
-    // "gentotallocs":479},
+    /*
+     {
+       "success":true,
+       "processingQueueDepth":1,
+       "results":[
+         {
+           "transid":"20170101-00928",
+           "username":"arkasha",
+           "firstTime":"2017-01-01T23:59:24.000Z",
+           "lastupdt":"2017-01-02T00:00:06.000Z",
+           "fileName":"1483315164_WigleWifi_20170101155922.csv",
+           "fileSize":20846,
+           "fileLines":174,
+           "status":"D",
+           "discoveredGps":0,
+           "discovered":0,
+           "total":118,
+           "totalGps":117,
+           "totalLocations":172,
+           "percentDone":100.0,
+           "timeParsing":5,
+           "genDiscovered":0,
+           "genDiscoveredGps":0,
+           "genTotal":1,
+           "genTotalGps":1,
+           "genTotalLocations":1,
+           "wait":null
+         }, ...
+       ]
+     }
+     */
     private static final String RESULT_LIST_KEY = "results";
 
-    private static final String KEY_TOTAL_WIFI_GPS = "discgps";
-    private static final String KEY_TOTAL_CELL_GPS = "gendiscgps";
+    private static final String KEY_TOTAL_WIFI_GPS = "discoveredGps";
+    private static final String KEY_TOTAL_CELL_GPS = "genDiscoveredGps";
     private static final String KEY_QUEUE_DEPTH = "processingQueueDepth";
     private static final String KEY_TRANSID = "transid";
     private static final String KEY_STATUS = "status";
-    private static final String KEY_PERCENT_DONE = "percentdone";
-    private static final String KEY_FILE_SIZE = "filesize";
+    private static final String KEY_PERCENT_DONE = "percentDone";
+    private static final String KEY_FILE_SIZE = "fileSize";
 
     private static final int ROW_COUNT = 100;
 
@@ -83,6 +97,17 @@ public class UploadsFragment extends Fragment {
     private UploadsListAdapter listAdapter;
     private RankDownloadHandler handler;
 
+    private static final Map<String, String> uploadStatusMap;
+    static {
+        Map<String, String> statusMap = new HashMap<String, String>();
+        statusMap.put("W", "upload_queued");
+        statusMap.put("I", "upload_parsing");
+        statusMap.put("T", "upload_trilaterating");
+        statusMap.put("S", "upload_stats");
+        statusMap.put("D", "upload_success");
+        statusMap.put("E", "upload_failed");
+        uploadStatusMap = Collections.unmodifiableMap(statusMap);
+    }
     /** Called when the activity is first created. */
     @Override
     public void onCreate( final Bundle savedInstanceState ) {
@@ -142,24 +167,41 @@ public class UploadsFragment extends Fragment {
         }
         final String monthUrl = MainActivity.UPLOADS_STATS_URL + "?pageend=" + ROW_COUNT;
         final ApiDownloader task = new ApiDownloader(getActivity(), ListFragment.lameStatic.dbHelper,
-                "uploads-cache.json", monthUrl, false, true, true,
+                "uploads-cache.json", monthUrl, false, true, true, ApiDownloader.REQUEST_GET,
                 new ApiListener() {
                     @Override
                     public void requestComplete(final JSONObject json, final boolean isCache) {
                         handleUploads(json, handler);
                     }
                 });
-        task.startDownload(this);
+        try {
+            task.startDownload(this);
+        } catch (WiGLEAuthException waex) {
+            MainActivity.info("Transactions Download Failed due to failed auth");
+        }
     }
 
     private void setupListView(final View view) {
+        final SharedPreferences prefs = getActivity().getSharedPreferences(ListFragment.SHARED_PREFS, 0);
         if (listAdapter == null) {
             listAdapter = new UploadsListAdapter(getActivity().getApplicationContext(), R.layout.uploadrow);
+        } else if (!listAdapter.isEmpty() && !TokenAccess.hasApiToken(prefs)) {
+            listAdapter.clear();
         }
         // always set our current list adapter
         final ListView listView = (ListView) view.findViewById(R.id.uploads_list_view);
         listView.setAdapter(listAdapter);
 
+    }
+
+    private String statusValue(String statusCode) {
+        String packageName = "net.wigle.wigleandroid";
+        int stringId =  getResources().getIdentifier("upload_unknown", "string", packageName);
+        if (uploadStatusMap.containsKey(statusCode)) {
+            stringId = getResources().getIdentifier(uploadStatusMap.get(statusCode), "string",
+                    packageName);
+        }
+        return getString(stringId);
     }
 
     private final static class RankDownloadHandler extends DownloadHandler {
@@ -223,7 +265,7 @@ public class UploadsFragment extends Fragment {
                     rowBundle.putLong(key, row.getLong(key));
                 }
                 rowBundle.putString(KEY_TRANSID, row.getString(KEY_TRANSID));
-                rowBundle.putString(KEY_STATUS, row.getString(KEY_STATUS));
+                rowBundle.putString(KEY_STATUS, this.statusValue(row.getString(KEY_STATUS)));
                 resultList.add(rowBundle);
             }
             bundle.putParcelableArrayList(RESULT_LIST_KEY, resultList);
